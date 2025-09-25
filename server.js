@@ -1,3 +1,4 @@
+// server.js - Production ready version
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
@@ -5,6 +6,7 @@ import dotenv from 'dotenv';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import serverless from 'serverless-http';
+
 // Routes imports
 import journalRoutes from './routes/journalRoutes.js';
 import moodRoutes from './routes/moodRoutes.js';
@@ -16,7 +18,9 @@ dotenv.config();
 const app = express();
 
 // Security Middleware
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 // Rate Limiting
 const limiter = rateLimit({
@@ -26,18 +30,21 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// CORS Configuration
+// CORS Configuration - UPDATED
 const allowedOrigins = [
   'http://localhost:5173',
   'https://mind-mate-frontend-lime.vercel.app'
 ];
+
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    if (!allowedOrigins.includes(origin)) {
-      return callback(new Error('CORS policy does not allow requested origin.'), false);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'CORS policy: Origin not allowed';
+      return callback(new Error(msg), false);
     }
-    callback(null, true);
+    return callback(null, true);
   },
   credentials: true
 }));
@@ -48,34 +55,53 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health Check Routes
 app.get('/', (req, res) => {
-  res.json({
-    message: '🚀 MindMate Backend Running',
+  res.json({ 
+    message: '🚀 MindMate Backend Running', 
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV
+    environment: process.env.NODE_ENV,
+    version: '1.0.0'
   });
 });
+
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  res.json({ 
+    status: 'ok', 
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     timestamp: new Date().toISOString()
   });
 });
 
-// MongoDB Connection (Optimized for Serverless)
+// Test AI Route
+app.get('/api/ai/test', (req, res) => {
+  res.json({ 
+    message: '✅ AI Route is working',
+    endpoint: '/api/ai/chat',
+    method: 'POST'
+  });
+});
+
+// MongoDB Connection
 const MONGODB_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/mindmate';
+
 let cachedDb = null;
 
 async function connectToDatabase() {
-  if (cachedDb) return cachedDb;
+  if (cachedDb) {
+    return cachedDb;
+  }
+
   try {
-    await mongoose.connect(MONGODB_URI, {
+    const options = {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
-    });
+    };
+
+    await mongoose.connect(MONGODB_URI, options);
     cachedDb = mongoose.connection;
+    console.log('✅ MongoDB connected successfully');
     return cachedDb;
   } catch (error) {
+    console.error('❌ MongoDB connection error:', error);
     throw error;
   }
 }
@@ -86,6 +112,11 @@ app.use(async (req, res, next) => {
     await connectToDatabase();
     next();
   } catch (error) {
+    console.error('Database connection failed:', error);
+    // Don't block API requests if DB fails
+    if (req.path.startsWith('/api/ai')) {
+      return next(); // Allow AI routes to work without DB
+    }
     res.status(503).json({
       error: 'Service Unavailable',
       message: 'Database connection failed',
@@ -105,15 +136,27 @@ app.use('*', (req, res) => {
     error: 'Route not found',
     path: req.originalUrl,
     method: req.method,
+    availableEndpoints: [
+      'GET /',
+      'GET /health',
+      'GET /api/ai/test',
+      'POST /api/ai/chat',
+      'POST /api/journal',
+      'GET /api/journal',
+      'POST /api/mood',
+      'GET /api/mood'
+    ],
     timestamp: new Date().toISOString()
   });
 });
 
-// Error Handler
+// Error Handler (should be last)
 app.use(errorHandler);
 
 // Serverless Handler
 const handler = serverless(app);
+
+// Export for Vercel
 export { handler };
 
 // Local Development Server
@@ -121,6 +164,10 @@ if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+    console.log(`🤖 AI Test: http://localhost:${PORT}/api/ai/test`);
   });
 }
+
 export default app;
