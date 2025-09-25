@@ -10,7 +10,9 @@ import moodRoutes from './routes/moodRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
-// Load environment variables from .env file
+// =======================
+// ✅ Load environment variables
+// =======================
 dotenv.config();
 
 const app = express();
@@ -27,8 +29,8 @@ app.use(helmet());
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,                 // Limit each IP to 100 requests
-  standardHeaders: true,   // Return `RateLimit-*` headers
-  legacyHeaders: false,    // Disable legacy headers
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use(limiter);
 
@@ -37,7 +39,7 @@ app.use(limiter);
 // =======================
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://your-production-domain.com' // ✅ Replace with actual deployed frontend domain
+  'https://mind-mate-frontend-lime.vercel.app' // ✅ your frontend live domain
 ];
 
 app.use(cors({
@@ -82,14 +84,14 @@ app.use(errorHandler);
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 5000 // 🛡 Timeout if DB is unreachable
+  serverSelectionTimeoutMS: 5000
 })
 .then(() => {
   console.log('✅ Connected to MongoDB Atlas');
 })
 .catch((err) => {
   console.error('❌ MongoDB Connection Failed:', err.message);
-  process.exit(1); // Exit to avoid running broken server
+  process.exit(1);
 });
 
 // =======================
