@@ -1,4 +1,4 @@
-// server.js
+// server.js - Updated MongoDB connection
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
@@ -25,7 +25,10 @@ const allowedOrigins = [
   'http://localhost:5173',
   'https://mind-mate-frontend-lime.vercel.app'
 ];
-app.use(cors({ origin: (origin, cb) => !origin || allowedOrigins.includes(origin) ? cb(null,true) : cb(new Error("Not allowed")), credentials:true }));
+app.use(cors({ 
+  origin: (origin, cb) => !origin || allowedOrigins.includes(origin) ? cb(null,true) : cb(new Error("Not allowed")), 
+  credentials:true 
+}));
 
 // Body parser
 app.use(express.json());
@@ -34,27 +37,54 @@ app.use(express.json());
 app.get('/', (req,res) => res.send('🚀 MindMate Backend Running'));
 app.get('/health', (req,res)=>res.json({status:'ok'}));
 
-// MongoDB connection (serverless-safe)
+// ✅ FIXED MongoDB connection (updated options)
 let cached = global.mongoose;
 if(!cached) cached = global.mongoose = { conn:null, promise:null };
 
 async function connectToDB(){
   if(cached.conn) return cached.conn;
+  
   if(!cached.promise){
-    cached.promise = mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser:true,
-      useUnifiedTopology:true,
-      serverSelectionTimeoutMS:5000
-    }).then(m => m);
+    // ✅ Updated connection options for Mongoose 8.x
+    const options = {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+    };
+
+    cached.promise = mongoose.connect(process.env.MONGO_URI, options)
+      .then(mongoose => {
+        console.log('✅ MongoDB Connected Successfully');
+        return mongoose;
+      })
+      .catch(err => {
+        console.error('❌ MongoDB Connection Error:', err);
+        cached.promise = null; // Reset on error
+        throw err;
+      });
   }
-  cached.conn = await cached.promise;
-  return cached.conn;
+  
+  try {
+    cached.conn = await cached.promise;
+    return cached.conn;
+  } catch (error) {
+    console.error('🚨 Database Connection Failed:', error);
+    throw error;
+  }
 }
 
 // Connect DB per request (serverless safe)
 app.use(async (req,res,next)=>{
-  await connectToDB();
-  next();
+  try {
+    await connectToDB();
+    next();
+  } catch (error) {
+    res.status(503).json({ 
+      error: 'Service temporarily unavailable', 
+      message: 'Database connection failed',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
 });
 
 // API routes
@@ -68,7 +98,7 @@ app.use(errorHandler);
 // ===================
 // LOCAL DEV
 // ===================
-if(process.env.NODE_ENV!=='production'){
+if(process.env.NODE_ENV !== 'production'){
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, ()=> console.log(`🚀 Local server running at http://localhost:${PORT}`));
 }
