@@ -1,4 +1,4 @@
-// server.js - Updated MongoDB connection
+// server.js - Production ready version
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import serverless from 'serverless-http';
 
+// Routes imports
 import journalRoutes from './routes/journalRoutes.js';
 import moodRoutes from './routes/moodRoutes.js';
 import aiRoutes from './routes/aiRoutes.js';
@@ -16,94 +17,138 @@ dotenv.config();
 
 const app = express();
 
-// Security & Rate Limit
-app.use(helmet());
-app.use(rateLimit({ windowMs: 15*60*1000, max: 100 }));
-
-// CORS
-const allowedOrigins = [
-  'http://localhost:5173',
-  'https://mind-mate-frontend-lime.vercel.app'
-];
-app.use(cors({ 
-  origin: (origin, cb) => !origin || allowedOrigins.includes(origin) ? cb(null,true) : cb(new Error("Not allowed")), 
-  credentials:true 
+// Security Middleware
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Body parser
-app.use(express.json());
+// Rate Limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.'
+});
+app.use(limiter);
 
-// Health check
-app.get('/', (req,res) => res.send('🚀 MindMate Backend Running'));
-app.get('/health', (req,res)=>res.json({status:'ok'}));
+// CORS Configuration
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://mind-mate-frontend-lime.vercel.app',
+  'https://your-frontend-domain.vercel.app' // Replace with your actual frontend domain
+];
 
-// ✅ FIXED MongoDB connection (updated options)
-let cached = global.mongoose;
-if(!cached) cached = global.mongoose = { conn:null, promise:null };
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true
+}));
 
-async function connectToDB(){
-  if(cached.conn) return cached.conn;
-  
-  if(!cached.promise){
-    // ✅ Updated connection options for Mongoose 8.x
+// Body Parser
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Health Check Routes
+app.get('/', (req, res) => {
+  res.json({ 
+    message: '🚀 MindMate Backend Running', 
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV 
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// MongoDB Connection (Optimized for Serverless)
+const MONGODB_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/mindmate';
+
+let cachedDb = null;
+
+async function connectToDatabase() {
+  if (cachedDb) {
+    console.log('✅ Using cached database connection');
+    return cachedDb;
+  }
+
+  try {
+    console.log('🔗 Creating new database connection');
+    
     const options = {
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
-      maxPoolSize: 10,
     };
 
-    cached.promise = mongoose.connect(process.env.MONGO_URI, options)
-      .then(mongoose => {
-        console.log('✅ MongoDB Connected Successfully');
-        return mongoose;
-      })
-      .catch(err => {
-        console.error('❌ MongoDB Connection Error:', err);
-        cached.promise = null; // Reset on error
-        throw err;
-      });
-  }
-  
-  try {
-    cached.conn = await cached.promise;
-    return cached.conn;
+    await mongoose.connect(MONGODB_URI, options);
+    cachedDb = mongoose.connection;
+    
+    console.log('✅ MongoDB connected successfully');
+    return cachedDb;
   } catch (error) {
-    console.error('🚨 Database Connection Failed:', error);
+    console.error('❌ MongoDB connection error:', error);
     throw error;
   }
 }
 
-// Connect DB per request (serverless safe)
-app.use(async (req,res,next)=>{
+// Database connection middleware
+app.use(async (req, res, next) => {
   try {
-    await connectToDB();
+    await connectToDatabase();
     next();
   } catch (error) {
-    res.status(503).json({ 
-      error: 'Service temporarily unavailable', 
+    console.error('Database connection failed:', error);
+    res.status(503).json({
+      error: 'Service Unavailable',
       message: 'Database connection failed',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// API routes
+// API Routes
 app.use('/api/journal', journalRoutes);
 app.use('/api/mood', moodRoutes);
 app.use('/api/ai', aiRoutes);
 
-// Error handler
+// 404 Handler
+app.use('*', (req, res) => {
+  res.status(404).json({
+    error: 'Route not found',
+    path: req.originalUrl,
+    method: req.method,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Error Handler (should be last)
 app.use(errorHandler);
 
-// ===================
-// LOCAL DEV
-// ===================
-if(process.env.NODE_ENV !== 'production'){
+// Serverless Handler
+const handler = serverless(app);
+
+// Export for Vercel
+export { handler };
+
+// Local Development Server
+if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, ()=> console.log(`🚀 Local server running at http://localhost:${PORT}`));
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  });
 }
 
-// ===================
-// VERCEL EXPORT
-// ===================
-export default serverless(app);
+export default app;
