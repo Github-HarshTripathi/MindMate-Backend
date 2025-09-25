@@ -8,10 +8,10 @@ import rateLimit from 'express-rate-limit';
 import serverless from 'serverless-http';
 
 // Routes imports
-import journalRoutes from '../routes/journalRoutes.js';
-import moodRoutes from '../routes/moodRoutes.js';
-import aiRoutes from '../routes/aiRoutes.js';
-import { errorHandler } from '../middleware/errorHandler.js';
+import journalRoutes from './routes/journalRoutes.js';
+import moodRoutes from './routes/moodRoutes.js';
+import aiRoutes from './routes/aiRoutes.js';
+import { errorHandler } from './middleware/errorHandler.js';
 
 dotenv.config();
 
