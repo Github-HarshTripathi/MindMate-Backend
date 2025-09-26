@@ -63,31 +63,68 @@ app.get('/health', (req, res) => {
 });
 
 // MongoDB Connection (Optimized for Serverless)
-const MONGODB_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/mindmate';
+const MONGODB_URI = process.env.MONGO_URI;
+
+if (!MONGODB_URI) {
+  console.error('❌ MONGO_URI environment variable is required');
+  process.exit(1);
+}
+
 let cachedDb = null;
 
 async function connectToDatabase() {
-  if (cachedDb) return cachedDb;
-  try {
-    await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    });
-    cachedDb = mongoose.connection;
+  if (cachedDb) {
+    console.log('✅ Using cached database connection');
     return cachedDb;
+  }
+  
+  try {
+    console.log('🔗 Connecting to MongoDB...');
+    
+    const client = await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      bufferCommands: false,
+      bufferMaxEntries: 0,
+      maxPoolSize: 10,
+    });
+    
+    cachedDb = mongoose.connection;
+    
+    cachedDb.on('error', (error) => {
+      console.error('❌ MongoDB connection error:', error);
+      cachedDb = null;
+    });
+    
+    cachedDb.on('disconnected', () => {
+      console.log('⚠️ MongoDB disconnected');
+      cachedDb = null;
+    });
+    
+    console.log('✅ MongoDB connected successfully');
+    return cachedDb;
+    
   } catch (error) {
+    console.error('❌ MongoDB connection failed:', error);
+    cachedDb = null;
     throw error;
   }
 }
 
-// Database connection middleware
+// Improved database connection middleware
 app.use(async (req, res, next) => {
+  // Skip database for AI routes that don't need it
+  if (req.path.startsWith('/api/ai')) {
+    return next();
+  }
+  
   try {
     await connectToDatabase();
     next();
   } catch (error) {
+    console.error('Database middleware error:', error);
     res.status(503).json({
-      error: 'Service Unavailable',
+      error: 'Service Temporarily Unavailable',
       message: 'Database connection failed',
       timestamp: new Date().toISOString()
     });
